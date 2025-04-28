@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+.env
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Testing
+.coverage
+.pytest_cache/
+
+# Data
+data/chroma_db/*
+!data/chroma_db/.gitkeep
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo

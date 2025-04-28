@@ -1,0 +1,24 @@
+# Core dependencies
+langchain
+langgraph
+langchain-community
+langserve
+fastapi
+uvicorn
+pydantic
+python-dotenv
+
+# Vector database
+chromadb
+
+# News API
+tavily-python
+
+# LLM
+ollama
+
+# For MCP (Model Context Protocol)
+mcp-python
+
+# Testing
+pytest
