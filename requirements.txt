@@ -20,5 +20,10 @@ ollama
 # For MCP (Model Context Protocol)
 mcp-python
 
+# Scientific computing and data processing
+numpy
+scipy
+pandas
+
 # Testing
 pytest

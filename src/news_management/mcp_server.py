@@ -16,11 +16,7 @@ from mcp.tools import Tool
 from fastapi import FastAPI
 
 from .tavily_wrapper import TavilyNewsWrapper
-
-# Import from content_management when it's created
-# from ..content_management.vector_store import VectorStore
-# from ..content_management.categorizer import NewsCategorizationService
-# from ..content_management.normalizer import NewsNormalizer
+from ..content_management.service import ContentManagementService
 
 
 class NewsManagementMCP:
@@ -29,32 +25,21 @@ class NewsManagementMCP:
     Implements tools for collecting and displaying news.
     """
 
-    def __init__(
-        self,
-        interests_file: str = None,
-        vector_store=None,
-        categorizer=None,
-        normalizer=None,
-    ):
+    def __init__(self, interests_file: str = None, reset_db: bool = False):
         """
         Initialize the MCP server for news management.
 
         Args:
             interests_file: Path to file containing user interests
-            vector_store: Vector store for storing news stories
-            categorizer: News categorization service
-            normalizer: News normalizer service
+            reset_db: Whether to reset the vector database
         """
         self.tavily = TavilyNewsWrapper()
         self.interests_file = interests_file or os.path.join(
             "data", "user_interests", "sample_interests.txt"
         )
 
-        # Store the content management services
-        # These will be implemented later
-        self.vector_store = vector_store
-        self.categorizer = categorizer
-        self.normalizer = normalizer
+        # Initialize content management service
+        self.content_service = ContentManagementService(reset_db=reset_db)
 
         # Initialize MCP server and tools
         self.app = FastAPI()
@@ -62,11 +47,6 @@ class NewsManagementMCP:
 
         # Register tools
         self._register_tools()
-
-        # Store for collected news (temporary solution until vector store is implemented)
-        self.collected_news = []
-        self.categorized_news = {}
-        self.interesting_news = []
 
     def _register_tools(self):
         """Register MCP tools"""
@@ -136,10 +116,51 @@ class NewsManagementMCP:
             },
         )
 
+        # Summarize story tool
+        summarize_story_tool = Tool(
+            name="summarize-story",
+            description="Get a detailed summary of a specific news story",
+            function=self.summarize_story,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "story_id": {
+                        "type": "string",
+                        "description": "ID of the story to summarize",
+                    }
+                },
+                "required": ["story_id"],
+            },
+        )
+
+        # Answer question tool
+        answer_question_tool = Tool(
+            name="answer-question",
+            description="Answer a question about news stories",
+            function=self.answer_question,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "description": "Question to answer",
+                    },
+                    "story_id": {
+                        "type": "string",
+                        "description": "ID of a specific story to answer from (optional)",
+                        "default": "",
+                    },
+                },
+                "required": ["question"],
+            },
+        )
+
         # Register all tools with the MCP server
         self.mcp_server.add_tool(collect_news_tool)
         self.mcp_server.add_tool(display_news_stories_tool)
         self.mcp_server.add_tool(display_interesting_stories_tool)
+        self.mcp_server.add_tool(summarize_story_tool)
+        self.mcp_server.add_tool(answer_question_tool)
 
     def collect_news(
         self, max_top_results: int = 10, max_interest_results: int = 3
@@ -165,29 +186,11 @@ class NewsManagementMCP:
             interests, max_interest_results
         )
 
-        # Store all collected news
+        # Combine all collected news
         all_news = top_news + interest_news
-        self.collected_news = all_news
 
-        # When content management is implemented, we would:
-        # 1. Store raw news in vector store
-        # if self.vector_store:
-        #     self.vector_store.add_documents(all_news)
-
-        # 2. Categorize news
-        # if self.categorizer:
-        #     self.categorized_news = self.categorizer.categorize_news(all_news)
-        # else:
-        # Temporary solution: simple categorization
-        self._simple_categorize_news(all_news)
-
-        # 3. Normalize news
-        # if self.normalizer:
-        #     normalized_news = self.normalizer.normalize_news(all_news)
-        #     self.vector_store.add_normalized_news(normalized_news)
-
-        # 4. Mark interest-related news
-        self.interesting_news = interest_news
+        # Process the news using content management service
+        result = self.content_service.process_news(all_news)
 
         # Return collection summary
         return {
@@ -196,90 +199,10 @@ class NewsManagementMCP:
             "top_news_count": len(top_news),
             "interest_news_count": len(interest_news),
             "interests": interests,
-            "categories": list(self.categorized_news.keys()),
+            "categories": result.get("categories", {}),
+            "raw_stored": result.get("raw_count", 0),
+            "normalized_stored": result.get("normalized_count", 0),
         }
-
-    def _simple_categorize_news(self, news_stories: List[Dict[str, Any]]):
-        """
-        Simple categorization based on title keywords.
-        This is a temporary solution until the real categorizer is implemented.
-
-        Args:
-            news_stories: List of news stories to categorize
-        """
-        categories = {
-            "world": [],
-            "us": [],
-            "sports": [],
-            "financial": [],
-            "technology": [],
-            "other": [],
-        }
-
-        for story in news_stories:
-            title = story["title"].lower()
-
-            # Very simple keyword-based categorization
-            if any(
-                word in title
-                for word in [
-                    "world",
-                    "global",
-                    "international",
-                    "europe",
-                    "asia",
-                    "africa",
-                ]
-            ):
-                categories["world"].append(story)
-            elif any(
-                word in title
-                for word in ["us", "united states", "america", "washington"]
-            ):
-                categories["us"].append(story)
-            elif any(
-                word in title
-                for word in [
-                    "sport",
-                    "game",
-                    "team",
-                    "player",
-                    "match",
-                    "ball",
-                    "tournament",
-                ]
-            ):
-                categories["sports"].append(story)
-            elif any(
-                word in title
-                for word in [
-                    "market",
-                    "stock",
-                    "economy",
-                    "business",
-                    "finance",
-                    "dollar",
-                    "bank",
-                ]
-            ):
-                categories["financial"].append(story)
-            elif any(
-                word in title
-                for word in [
-                    "tech",
-                    "technology",
-                    "software",
-                    "computer",
-                    "digital",
-                    "ai",
-                    "app",
-                ]
-            ):
-                categories["technology"].append(story)
-            else:
-                categories["other"].append(story)
-
-        self.categorized_news = categories
 
     def display_news_stories(self, category: str = "all") -> Dict[str, Any]:
         """
@@ -291,35 +214,31 @@ class NewsManagementMCP:
         Returns:
             Dictionary with news stories
         """
-        if not self.collected_news:
+        # Get news from the content management service
+        news_stories = self.content_service.get_news_by_category(
+            category if category != "all" else None
+        )
+
+        if not news_stories:
             return {
                 "status": "error",
-                "message": "No news collected yet. Run collect-news first.",
+                "message": f"No news found for category: {category}. Run collect-news first.",
             }
 
         result = {"status": "success", "stories": []}
 
-        if category == "all":
-            # Return all stories
-            for story in self.collected_news:
-                result["stories"].append(
-                    {
-                        "title": story["title"],
-                        "url": story["url"],
-                        "published_date": story["published_date"],
-                    }
-                )
-        else:
-            # Return stories from a specific category
-            if category in self.categorized_news:
-                for story in self.categorized_news[category]:
-                    result["stories"].append(
-                        {
-                            "title": story["title"],
-                            "url": story["url"],
-                            "published_date": story["published_date"],
-                        }
-                    )
+        # Format stories
+        for story in news_stories:
+            result["stories"].append(
+                {
+                    "id": story.get("id", ""),
+                    "title": story.get("title", ""),
+                    "url": story.get("url", ""),
+                    "published_date": story.get("published_date", ""),
+                    "category": story.get("category", ""),
+                    "summary": story.get("summary", ""),
+                }
+            )
 
         result["count"] = len(result["stories"])
         return result
@@ -334,40 +253,62 @@ class NewsManagementMCP:
         Returns:
             Dictionary with interesting news stories
         """
-        if not self.interesting_news:
+        # Get news from the content management service
+        news_stories = self.content_service.get_news_by_interest(
+            interest if interest else None
+        )
+
+        if not news_stories:
             return {
                 "status": "error",
-                "message": "No interest-based news collected yet. Run collect-news first.",
+                "message": f"No news found for interest: {interest if interest else 'any'}. Run collect-news first.",
             }
 
         result = {"status": "success", "stories": []}
 
-        if interest:
-            # Filter by specific interest
-            for story in self.interesting_news:
-                if story.get("interest", "").lower() == interest.lower():
-                    result["stories"].append(
-                        {
-                            "title": story["title"],
-                            "url": story["url"],
-                            "published_date": story["published_date"],
-                            "interest": story.get("interest", ""),
-                        }
-                    )
-        else:
-            # Return all interesting stories
-            for story in self.interesting_news:
-                result["stories"].append(
-                    {
-                        "title": story["title"],
-                        "url": story["url"],
-                        "published_date": story["published_date"],
-                        "interest": story.get("interest", ""),
-                    }
-                )
+        # Format stories
+        for story in news_stories:
+            result["stories"].append(
+                {
+                    "id": story.get("id", ""),
+                    "title": story.get("title", ""),
+                    "url": story.get("url", ""),
+                    "published_date": story.get("published_date", ""),
+                    "category": story.get("category", ""),
+                    "interest": story.get("interest", ""),
+                    "summary": story.get("summary", ""),
+                }
+            )
 
         result["count"] = len(result["stories"])
         return result
+
+    def summarize_story(self, story_id: str) -> Dict[str, Any]:
+        """
+        Get a detailed summary of a specific news story.
+
+        Args:
+            story_id: ID of the story to summarize
+
+        Returns:
+            Dictionary with story summary
+        """
+        return self.content_service.summarize_story(story_id)
+
+    def answer_question(self, question: str, story_id: str = "") -> Dict[str, Any]:
+        """
+        Answer a question about news stories.
+
+        Args:
+            question: Question to answer
+            story_id: ID of a specific story to answer from (optional)
+
+        Returns:
+            Dictionary with answer
+        """
+        return self.content_service.answer_question(
+            question, story_id if story_id else None
+        )
 
     def start(self, host: str = "0.0.0.0", port: int = 8000):
         """
@@ -382,17 +323,20 @@ class NewsManagementMCP:
         uvicorn.run(self.app, host=host, port=port)
 
 
-def create_mcp_server(interests_file: Optional[str] = None) -> NewsManagementMCP:
+def create_mcp_server(
+    interests_file: Optional[str] = None, reset_db: bool = False
+) -> NewsManagementMCP:
     """
     Create and return a NewsManagementMCP instance.
 
     Args:
         interests_file: Path to file containing user interests
+        reset_db: Whether to reset the vector database
 
     Returns:
         NewsManagementMCP instance
     """
-    return NewsManagementMCP(interests_file=interests_file)
+    return NewsManagementMCP(interests_file=interests_file, reset_db=reset_db)
 
 
 # For testing purposes
